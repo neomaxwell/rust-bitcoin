@@ -485,15 +485,16 @@ impl Index<usize> for Witness {
 ///
 /// This type is so far private but it could be published eventually. The design is geared towards
 /// it but it's not fully finished.
-enum P2TrSpend<'a> {
+pub enum P2TrSpend<'a> {
     Key {
         // This field is technically present in witness in case of key spend but none of our code
         // uses it yet. Rather than deleting it, it's kept here commented as documentation and as
         // an easy way to add it if anything needs it - by just uncommenting.
-        // signature: &'a [u8],
+        signature: &'a [u8],
         annex: Option<&'a [u8]>,
     },
     Script {
+        input: Vec<Option<&'a [u8]>>,
         leaf_script: &'a Script,
         control_block: &'a [u8],
         annex: Option<&'a [u8]>,
@@ -510,7 +511,7 @@ impl<'a> P2TrSpend<'a> {
     /// In other words, if the caller is certain that the witness is a valid p2tr spend (e.g.
     /// obtained from Bitcoin Core) then it's OK to unwrap this but not vice versa - `Some` does
     /// not imply correctness.
-    fn from_witness(witness: &'a Witness) -> Option<Self> {
+    pub fn from_witness(witness: &'a Witness) -> Option<Self> {
         // BIP341 says:
         //   If there are at least two witness elements, and the first byte of
         //   the last element is 0x50, this last element is called annex a
@@ -520,10 +521,10 @@ impl<'a> P2TrSpend<'a> {
         // for the fact that annex is still there.
         match witness.len() {
             0 => None,
-            1 => Some(P2TrSpend::Key { /* signature: witness.last().expect("len > 0") ,*/ annex: None }),
+            1 => Some(P2TrSpend::Key { signature: witness.last().expect("len > 0") , annex: None }),
             2 if witness.last().expect("len > 0").starts_with(&[TAPROOT_ANNEX_PREFIX]) => {
                 let spend = P2TrSpend::Key {
-                    // signature: witness.second_to_last().expect("len > 1"),
+                    signature: witness.second_to_last().expect("len > 1"),
                     annex: witness.last(),
                 };
                 Some(spend)
@@ -533,14 +534,18 @@ impl<'a> P2TrSpend<'a> {
             //   arm.
             3.. if witness.last().expect("len > 0").starts_with(&[TAPROOT_ANNEX_PREFIX]) => {
                 let spend = P2TrSpend::Script {
+                    input: Vec::new(),
                     leaf_script: Script::from_bytes(witness.third_to_last().expect("len > 2")),
                     control_block: witness.second_to_last().expect("len > 1"),
                     annex: witness.last(),
                 };
                 Some(spend)
             },
-            _ => {
+            n => {
+                let input = (0..n - 2).into_iter().map(|i| witness.nth(i)).collect();
+
                 let spend = P2TrSpend::Script {
+                    input,
                     leaf_script: Script::from_bytes(witness.second_to_last().expect("len > 1")),
                     control_block: witness.last().expect("len > 0"),
                     annex: None,
@@ -550,7 +555,7 @@ impl<'a> P2TrSpend<'a> {
         }
     }
 
-    fn annex(&self) -> Option<&'a [u8]> {
+    pub fn annex(&self) -> Option<&'a [u8]> {
         match self {
             P2TrSpend::Key { annex, .. } => *annex,
             P2TrSpend::Script { annex, .. } => *annex,
